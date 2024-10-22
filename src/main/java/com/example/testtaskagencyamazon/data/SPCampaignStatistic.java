@@ -43,6 +43,10 @@ public class SPCampaignStatistic extends CampaignStatistic<SPCampaignStatistic> 
 
   @Override
   public SPCampaignStatistic add(SPCampaignStatistic other) {
+    if (this.equals(other)) {
+      return this;
+    }
+
     this.incrementCounter();
 
     this.checkNameAndDate(other);

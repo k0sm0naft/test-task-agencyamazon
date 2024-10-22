@@ -41,58 +41,23 @@ public class CampaignStatService {
         .getSPDailyCampaignReports(profileId, portfolioIds, campaignIdsLong, null, startDate, endDate);
 
     // Create a map to aggregate SPCampaignStatistic objects
-    Map<Long, SPCampaignStatistic> campaignAnalyticMap = new HashMap<>();
-    for (SPCampaignReport report : reports) {
-      Long campaignId = report.getCampaignId();
+      Map<Long, SPCampaignStatistic> campaignAnalyticMap = getAggregatedCampaignStatistic(reports);
 
-      campaignAnalyticMap.computeIfAbsent(campaignId, k -> new SPCampaignStatistic(report))
-          .add(new SPCampaignStatistic(report));
-    }
-
-    // Get all enabled SP campaigns by profile and portfolio
+      // Get all enabled SP campaigns by profile and portfolio
     List<SPCampaign> allEnabledCampaigns = campaignService
         .getAllSPCampaignsByProfile(accountId, profileId, portfolioIds, campaignIds, Collections.singletonList(ENABLED))
         .getCampaigns();
 
     // Add any campaigns without reports as empty statistics
-    for (SPCampaign campaign : allEnabledCampaigns) {
-      Long campaignId = Long.parseLong(campaign.getCampaignId());
-      if (!campaignAnalyticMap.containsKey(campaignId)) {
-        String portfolioId = campaign.getPortfolioId();
-        Long portfolioIdLong = ObjectsUtil.parseLong(portfolioId);
+      fillStatisticsForAllCampaigns(profileId, endDate, allEnabledCampaigns, campaignAnalyticMap);
 
-        campaignAnalyticMap.put(
-            campaignId,
-            SPCampaignStatistic.createEmptyStatistic(
-                Long.parseLong(profileId),
-                portfolioIdLong,
-                endDate,
-                campaignId,
-                campaign.getName(),
-                campaign.getState()
-            )
-        );
-      }
-    }
+      // Apply sorting if the sortMetric and sortDirection are specified
+      List<SPCampaignStatistic> campaignStatistics = applySorting(sortMetric, sortDirection, campaignAnalyticMap);
 
-    // Apply sorting if the sortMetric and sortDirection are specified
-    List<SPCampaignStatistic> campaignStatistics = new ArrayList<>(campaignAnalyticMap.values());
-    if (sortMetric != null && sortDirection != null) {
-      Comparator<SPCampaignStatistic> sortingComparator = createSPComparator(sortMetric, sortDirection);
-      campaignStatistics = campaignStatistics.stream()
-          .sorted(sortingComparator)
-          .toList();
-    }
+      // Apply pagination if pageIndex and pageSize are specified
+      campaignStatistics = applyPagination(pageIndex, pageSize, campaignStatistics);
 
-    // Apply pagination if pageIndex and pageSize are specified
-    if (pageIndex != null && pageSize != null && pageIndex > 0 && pageSize > 0) {
-      campaignStatistics = campaignStatistics.stream()
-          .skip((long) (pageIndex - 1) * pageSize)
-          .limit(pageSize)
-          .toList();
-    }
-
-    // Convert the final list back to a map for the return value
+      // Convert the final list back to a map for the return value
     Map<Long, SPCampaignStatistic> finalCampaignAnalyticMap = campaignStatistics.stream()
         .collect(Collectors.toMap(SPCampaignStatistic::getCampaignId, statistic -> statistic));
 
@@ -102,7 +67,74 @@ public class CampaignStatService {
     return finalCampaignAnalyticMap;
   }
 
-  private Comparator<SPCampaignStatistic> createSPComparator(
+    private Map<Long, SPCampaignStatistic> getAggregatedCampaignStatistic(List<SPCampaignReport> reports) {
+        Map<Long, SPCampaignStatistic> campaignAnalyticMap = new HashMap<>();
+        for (SPCampaignReport report : reports) {
+            Long campaignId = report.getCampaignId();
+            SPCampaignStatistic campaignStatistic = new SPCampaignStatistic(report);
+
+            if (campaignAnalyticMap.containsKey(campaignId)) {
+                campaignAnalyticMap.get(campaignId).add(campaignStatistic);
+            } else {
+                campaignAnalyticMap.put(campaignId, campaignStatistic);
+            }
+        }
+        return campaignAnalyticMap;
+    }
+
+    private void fillStatisticsForAllCampaigns(String profileId, String endDate,
+            List<SPCampaign> allEnabledCampaigns,
+            Map<Long, SPCampaignStatistic> campaignAnalyticMap) {
+        for (SPCampaign campaign : allEnabledCampaigns) {
+          Long campaignId = Long.parseLong(campaign.getCampaignId());
+          if (!campaignAnalyticMap.containsKey(campaignId)) {
+            String portfolioId = campaign.getPortfolioId();
+            Long portfolioIdLong = ObjectsUtil.parseLong(portfolioId);
+
+            campaignAnalyticMap.put(
+                campaignId,
+                SPCampaignStatistic.createEmptyStatistic(
+                    Long.parseLong(profileId),
+                    portfolioIdLong,
+                        endDate,
+                    campaignId,
+                    campaign.getName(),
+                    campaign.getState()
+                )
+            );
+          }
+        }
+    }
+
+    private List<SPCampaignStatistic> applySorting(
+            Metric sortMetric, DirectionType sortDirection,
+            Map<Long, SPCampaignStatistic> campaignAnalyticMap
+    ) {
+        List<SPCampaignStatistic> campaignStatistics = new ArrayList<>(campaignAnalyticMap.values());
+
+        if (sortMetric == null || sortDirection == null) {
+            return campaignStatistics;
+        }
+
+        return campaignStatistics.stream()
+                                 .sorted(createSPComparator(sortMetric, sortDirection))
+                                 .toList();
+    }
+
+    private List<SPCampaignStatistic> applyPagination(
+            Integer pageIndex, Integer pageSize,
+            List<SPCampaignStatistic> campaignStatistics
+    ) {
+        if (pageIndex == null || pageSize == null || pageIndex <= 0 || pageSize <= 0) {
+            return campaignStatistics;
+        }
+        return campaignStatistics.stream()
+                                 .skip((long) (pageIndex - 1) * pageSize)
+                                 .limit(pageSize)
+                                 .toList();
+    }
+
+    private Comparator<SPCampaignStatistic> createSPComparator(
       Metric sortMetric, DirectionType sortDirection
   ) {
     Comparator<SPCampaignStatistic> comparator = switch (sortMetric) {
